@@ -1,0 +1,80 @@
+parameters:
+  - name: POOL
+    default: 'ubuntu-latest'
+  - name: PREVIOUS_JOB_NAME
+    default: ''
+  - name: ADF_ARTIFACT
+    type: string
+    default: 'datafactory'
+  - name: MODULE_PATH
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/src'
+  - name: PWSH_MODULE_PATH
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/src/powershell'
+  - name: JOB_NAME
+    type: string
+    default: 'BUILD_ADF_FLOWS'
+  - name: ADF_RESOURCE_ID
+    type: string
+
+jobs:
+  - job: '${{ parameters.JOB_NAME }}'
+    dependsOn: ${{ parameters.PREVIOUS_JOB_NAME }}
+    displayName: "Datafactory CI"
+    pool:
+      vmImage: ${{ parameters.POOL }}
+    variables:
+    - name: 'modulePath'
+      value: '${{ parameters.MODULE_PATH }}'
+    - name: 'pwshPath'
+      value: '${{ parameters.PWSH_MODULE_PATH }}'
+    steps:
+    - checkout: self
+      submodules: true
+      persistCredentials: true
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '12.x'
+      displayName: 'Install Node.js'
+
+    - task: Npm@1
+      inputs:
+        command: 'install'
+        workingDir: '$(modulePath)' #replace with the package.json folder
+        verbose: true
+      displayName: 'Install npm package'
+
+    - task: Npm@1
+      inputs:
+        command: 'custom'
+        workingDir: '$(modulePath)' #replace with the package.json folder
+        customCommand: 'run build validate $(modulePath) ${{ parameters.ADF_RESOURCE_ID}}'
+      displayName: 'Validate'
+
+    - task: Npm@1
+      inputs:
+        command: 'custom'
+        workingDir: '$(modulePath)' #replace with the package.json folder
+        customCommand: 'run build export $(modulePath) ${{ parameters.ADF_RESOURCE_ID}} "ArmTemplate"'
+      displayName: 'Validate and Generate ARM template'
+
+# Publish the artifact to be used as a source for a release pipeline.
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish powershell artifact'
+      inputs:
+        targetPath: $(pwshPath)/trigger_manager.ps1
+        artifactName: triggerManager
+
+    - powershell: |
+        Rename-Item -Path "*_GlobalParameters.json" -NewName "global_parameters.json"   
+      displayName: 'Normalize Global parameters'
+      workingDirectory: '$(modulePath)/ArmTemplate'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish artifact'
+      inputs:
+        targetPath: '$(modulePath)/ArmTemplate' #replace with the package.json folder
+        artifactName: '${{ parameters.ADF_ARTIFACT }}'

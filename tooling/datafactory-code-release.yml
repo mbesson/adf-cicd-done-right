@@ -1,0 +1,129 @@
+parameters:
+  - name: POOL
+    default: "ubuntu-latest"
+  - name: ENVIRONMENT
+    type: string
+  - name: ADF_ARTIFACT
+    type: string
+    default: 'datafactory'
+  - name: PWSH_ARTIFACT
+    type: string
+    default: 'triggerManager'
+  - name: KEY_VAULT_NAME
+    type: string
+  - name: SERVICE_PRINCIPAL
+    type: string
+  - name: RESOURCE_GROUP_NAME_SECRET
+    type: string
+  - name: FACTORY_NAME_SECRET
+    type: string
+  - name: INFRA_REGION
+    type: string
+    default: 'West Europe'
+  - name: PARAMETER_SECRETS
+    type: object
+    default: {}
+  - name: GLOBAL_PARAMETERS_SECRETS
+    type: object
+    default: {}
+  - name: REPLACED_VALUES
+    type: object
+    default: {}
+
+jobs:
+  - deployment: 'DEPLOY_DATA_FACTORY'
+    environment: '${{ parameters.ENVIRONMENT }}'
+    displayName: 'DataFactory CD on ${{ parameters.ENVIRONMENT }}'
+    pool:
+      vmImage: ${{ parameters.POOL }}
+    variables:
+    - name: workingDirectory
+      value: '$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}'
+    workspace:
+      clean:  all # what to clean up before the job runs
+    condition: and(not(failed()), not(canceled()))
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - download: none
+            - checkout: none
+              displayName: "No Download"
+            - task: DownloadPipelineArtifact@2
+              displayName: 'Download artifact for Datafactory'
+              inputs:
+                artifact: '${{ parameters.ADF_ARTIFACT }}'
+                path: '$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}'
+            - task: DownloadPipelineArtifact@2
+              displayName: 'Download artifact for powershell'
+              inputs:
+                artifact: '${{ parameters.PWSH_ARTIFACT }}'
+                path: '$(Pipeline.Workspace)/${{ parameters.PWSH_ARTIFACT }}'
+            - task: AzureKeyVault@2
+              displayName: 'Get KeyVault secret ${{ parameters.RESOURCE_GROUP_NAME_SECRET }}'
+              inputs:
+                connectedServiceName: '${{ parameters.SERVICE_PRINCIPAL }}'
+                keyVaultName: '${{ parameters.KEY_VAULT_NAME }}'
+                secretsFilter: '${{ parameters.RESOURCE_GROUP_NAME_SECRET }}'
+            - powershell: echo "##vso[task.setvariable variable=factory_global.resource_group_name]$(${{ parameters.RESOURCE_GROUP_NAME_SECRET }})"  
+            - task: AzureKeyVault@2
+              displayName: 'Get KeyVault secret ${{ parameters.FACTORY_NAME_SECRET }}'
+              inputs:
+                connectedServiceName: '${{ parameters.SERVICE_PRINCIPAL }}'
+                keyVaultName: '${{ parameters.KEY_VAULT_NAME }}'
+                secretsFilter: '${{ parameters.FACTORY_NAME_SECRET }}'
+            - powershell: echo "##vso[task.setvariable variable=factory_global.factory_name]$(${{ parameters.FACTORY_NAME_SECRET }})"  
+            - task: AzurePowerShell@5
+              displayName: 'Pre deploy script'
+              inputs:
+                azureSubscription: ${{ parameters.SERVICE_PRINCIPAL }}
+                ScriptType: 'FilePath'
+                ScriptPath: '$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/PrePostDeploymentScript.ps1'
+                ScriptArguments: '-armTemplate "$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/ARMTemplateForFactory.json" -ResourceGroupName $(factory_global.resource_group_name) -DataFactoryName $(factory_global.factory_name) -predeployment $true -deleteDeployment $false'
+                azurePowerShellVersion: 'LatestVersion'
+            - template: ./tasks-adf-parameter.yml
+              parameters:
+                KEY_VAULT_NAME: '${{ parameters.KEY_VAULT_NAME }}'
+                SERVICE_PRINCIPAL: '${{ parameters.SERVICE_PRINCIPAL }}'
+                SECRET_NAME: '${{ parameters.FACTORY_NAME_SECRET }}'
+                WORKING_DIR: '$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}'
+                PARAMETER_NAME: 'factoryName'
+            
+            - ${{ each pair in parameters.GLOBAL_PARAMETERS_SECRETS }}:
+              - template: ./tasks-adf-parameter.yml
+                parameters:
+                  KEY_VAULT_NAME: '${{ parameters.KEY_VAULT_NAME }}'
+                  SERVICE_PRINCIPAL: '${{ parameters.SERVICE_PRINCIPAL }}'
+                  SECRET_NAME: '${{ pair.value }}'
+                  WORKING_DIR: '$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}'
+                  PARAMETER_NAME: '${{ pair.key }}'
+                  PATH_PREFIX: ''
+                  FILE_NAME: 'global_parameters.json'
+
+
+            - task: AzureResourceGroupDeployment@2
+              displayName: "Deploy : Azure Data Factory "
+              inputs:
+                azureSubscription: ${{ parameters.SERVICE_PRINCIPAL }}
+                resourceGroupName: '$(factory_global.resource_group_name)'
+                location: ${{ parameters.INFRA_REGION }}
+                csmFile: "$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/ARMTemplateForFactory.json"
+                csmParametersFile: "$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/ARMTemplateParametersForFactory.json"
+
+            - task: AzurePowerShell@5
+              displayName: 'Update global parameters'
+              inputs:
+                azureSubscription: ${{ parameters.SERVICE_PRINCIPAL }}
+                ScriptType: 'FilePath'
+                ScriptPath: '$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/GlobalParametersUpdateScript.ps1'
+                ScriptArguments: '-globalParametersFilePath "$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/global_parameters.json" -resourceGroupName $(factory_global.resource_group_name) -dataFactoryName $(factory_global.factory_name)'
+                azurePowerShellVersion: 'LatestVersion'
+
+            - task: AzurePowerShell@5
+              displayName: 'Post deploy script'
+              inputs:
+                azureSubscription: ${{ parameters.SERVICE_PRINCIPAL }}
+                ScriptType: 'FilePath'
+                ScriptPath: '$(Pipeline.Workspace)/${{ parameters.PWSH_ARTIFACT }}/trigger_manager.ps1'
+                ScriptArguments: '-armTemplate "$(Pipeline.Workspace)/${{ parameters.ADF_ARTIFACT }}/ARMTemplateForFactory.json" -ResourceGroupName $(factory_global.resource_group_name) -DataFactoryName $(factory_global.factory_name) -predeployment $false -deleteDeployment $false'
+                azurePowerShellVersion: 'LatestVersion'

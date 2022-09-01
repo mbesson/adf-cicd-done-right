@@ -1,0 +1,38 @@
+parameters:
+  - name: KEY_VAULT_NAME
+    type: string
+  - name: SERVICE_PRINCIPAL
+    type: string
+  - name: SECRET_NAME
+    type: string
+  - name: WORKING_DIR
+    type: string
+  - name: FILE_NAME
+    type: string
+    default: 'ARMTemplateParametersForFactory.json'
+  - name: PARAMETER_NAME
+    type: string
+  - name: PATH_PREFIX
+    type: string
+    default: '/parameters'
+  
+steps:
+  - task: AzureKeyVault@2
+    displayName: 'Get KeyVault secret ${{ parameters.SECRET_NAME }}'
+    inputs:
+      connectedServiceName: '${{ parameters.SERVICE_PRINCIPAL }}'
+      keyVaultName: '${{ parameters.KEY_VAULT_NAME }}'
+      secretsFilter: '${{ parameters.SECRET_NAME }}'
+  - powershell: echo "##vso[task.setvariable variable=factory_parameter_update.volatile]$(${{ parameters.SECRET_NAME }})"  
+    displayName: 'Push variable for ${{ parameters.SECRET_NAME }}'
+  - task: JsonPatch@4
+    displayName: "Update template values with ${{ parameters.SECRET_NAME }} value"
+    inputs:
+      SyntaxType: "slick"
+      JsonWorkingDir: '${{ parameters.WORKING_DIR }}'
+      JsonTargetFilters: '${{ parameters.FILE_NAME }}'
+      JsonPatchContent: |                        
+        = ${{ parameters.PATH_PREFIX }}/${{ parameters.PARAMETER_NAME }}/value => "$(factory_parameter_update.volatile)"
+      OutputPatchFile: true
+      FailIfNoPatchApplied: true
+      TreatErrors: "ERROR"
