@@ -1,0 +1,39 @@
+parameters:
+  - name: TERRAFORM_SPN
+    type: string
+  - name: STAGE_NAME
+    type: string
+    default: 'CONTINUOUS_DEPLOY'
+  - name: PREV_STAGE_NAME
+    type: string
+    default: 'BUILD'
+  - name: ENVIRONMENT
+    type: string
+    default: 'INT'
+  - name: DEPLOY_CODE
+    type: boolean
+    default: true
+
+stages:
+  - stage:  ${{ parameters.STAGE_NAME }}_${{ parameters.ENVIRONMENT }}
+    displayName: "Continuous deployment"
+    dependsOn: ${{ parameters.PREV_STAGE_NAME }}
+    variables:
+    - group: 'DATALAKE_${{ parameters.ENVIRONMENT }}'
+    jobs:
+    - ${{ if eq( parameters.DEPLOY_CODE , true) }}:     
+      - template: ./datafactory-code-release.yml@templates
+        parameters:
+          ENVIRONMENT: '${{ parameters.ENVIRONMENT }}'
+          KEY_VAULT_NAME: '$(application_key_vault_name)'
+          SERVICE_PRINCIPAL: '${{ parameters.TERRAFORM_SPN }}'
+          RESOURCE_GROUP_NAME_SECRET: 'resource-group-name'
+          FACTORY_NAME_SECRET: 'data-factory-name'
+          PARAMETER_SECRETS:
+            datalake_identity_properties_typeProperties_resourceId: 'managed-identity-id'
+            keyvault_properties_typeProperties_baseUrl: 'key-vault-uri'
+          GLOBAL_PARAMETERS_SECRETS:
+            databricks_workspace_url: 'databricks-workspace-url'
+            databricks_workspace_resource_id: 'databricks-workspace-id'
+            notebook_root_path: 'delivery-path'
+            staging_blob_url: 'staging-blob-url'    

@@ -1,0 +1,62 @@
+trigger:
+  branches:
+    include:
+      - master
+      - staging
+      - integration
+      - feature/*
+  paths:
+    exclude:
+      - src/datafactory
+      - doc
+
+resources:
+  repositories:
+  - repository: templates
+    type: git
+    name: DevOpsADF/tooling
+    ref: refs/heads/master
+
+variables:
+  - name: isMaster
+    value: ${{ contains(variables['Build.SourceBranch'], 'master') }}
+  - name: isCollab
+    value: ${{ contains(variables['Build.SourceBranch'], 'integration') }}
+  - name: isStaging
+    value: ${{ contains(variables['Build.SourceBranch'], 'staging') }}
+  - name: isFeature
+    value: ${{ contains(variables['Build.SourceBranch'], 'feature') }}
+  - name: deployProd
+    value: ${{ and(not(contains(variables['Build.Reason'], 'PullRequest')), eq(variables.isMaster, 'true')) }}
+  - name: deployStaging
+    value: ${{ and(not(contains(variables['Build.Reason'], 'PullRequest')), eq(variables.isStaging, 'true')) }}
+  - name: deployCollab
+    value: ${{ and(not(contains(variables['Build.Reason'], 'PullRequest')), eq(variables.isCollab, 'true')) }}
+  - name: deployFeature
+    value: ${{ and(not(contains(variables['Build.Reason'], 'PullRequest')), eq(variables.isFeature, 'true')) }}
+  - name: System.Debug
+    value: true
+
+stages:
+- template: ./ci.yml
+- ${{ if eq(variables.deployFeature, 'true') }}: 
+  - template: ./cd.yml
+    parameters:
+      TERRAFORM_SPN : 'spn-delivery-prd'
+      ENVIRONMENT: 'DEV'
+      DEPLOY_CODE: false
+- ${{ if eq(variables.deployCollab, 'true') }}: 
+  - template: ./cd.yml
+    parameters:
+      TERRAFORM_SPN : 'spn-delivery-prd'
+      ENVIRONMENT: 'INT'
+- ${{ if eq(variables.deployStaging, 'true') }}: 
+  - template: ./cd.yml
+    parameters:
+      TERRAFORM_SPN : 'spn-delivery-prd'
+      ENVIRONMENT: 'PRE'
+- ${{ if eq(variables.deployProd, 'true') }}: 
+  - template: ./cd.yml
+    parameters:
+      TERRAFORM_SPN : 'spn-delivery-prd'
+      ENVIRONMENT: 'PRD'
