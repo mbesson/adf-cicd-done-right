@@ -61,7 +61,7 @@ jobs:
       displayName: 'Validate and Generate ARM template'
 
 # Publish the artifact to be used as a source for a release pipeline.
-
+# This steps allows you to publish artefacts so that you can use them in next steps
     - task: PublishPipelineArtifact@1
       displayName: 'Publish powershell artifact'
       inputs:
